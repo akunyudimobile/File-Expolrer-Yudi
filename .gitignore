@@ -1,12 +1,29 @@
-Abaikan file kunci Firebase agar tidak terunggah ke GitHub
+File rahasia Firebase (Hapus file ini dari GitHub setelah mengupdate .gitignore)
 
 serviceAccountKey.json
+serviceAccountKey.jso.json
+*.json
 
-Abaikan folder lingkungan Python
+Abaikan folder lingkungan virtual Python
 
 venv/
-.env
+.venv/
+env/
+bin/
+lib/
+include/
 
-Abaikan file temporary Streamlit
+Abaikan file temporary dan cache Streamlit
 
 .streamlit/
+pycache/
+*.py[cod]
+
+File sistem
+
+.DS_Store
+Thumbs.db
+
+File lingkungan (environment variables)
+
+.env
