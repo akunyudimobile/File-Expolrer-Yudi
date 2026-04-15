@@ -1,0 +1,12 @@
+Abaikan file kunci Firebase agar tidak terunggah ke GitHub
+
+serviceAccountKey.json
+
+Abaikan folder lingkungan Python
+
+venv/
+.env
+
+Abaikan file temporary Streamlit
+
+.streamlit/
