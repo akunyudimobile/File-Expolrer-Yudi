@@ -17,8 +17,7 @@ st.set_page_config(
 )
 
 # --- 2. CONFIG & SECRETS ---
-# Mengambil kredensial dari st.secrets (Keamanan dari GitHub Scanning)
-# Data ini diambil dari file .streamlit/secrets.toml saat dijalankan lokal
+# Mengambil kredensial Google dari st.secrets (Dashboard Streamlit Cloud)
 try:
     CLIENT_CONFIG = {
         "web": {
@@ -27,11 +26,11 @@ try:
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
-            "redirect_uris": ["http://localhost:8501"]
+            "redirect_uris": ["http://localhost:8501", "https://file-expolrer-yudi.streamlit.app"]
         }
     }
-except KeyError:
-    st.error("Kredensial Google tidak ditemukan di secrets.toml!")
+except Exception as e:
+    st.error("Kredensial Google (ID/Secret) tidak ditemukan di Secrets Dashboard!")
     st.stop()
 
 # Inisialisasi Firebase
@@ -41,12 +40,18 @@ app_id = "omnicloud-v1"
 def init_firebase():
     if not firebase_admin._apps:
         try:
-            # Menggunakan JSON rahasia Firebase
-            if os.path.exists('serviceAccountKey.jso.json'):
+            # PRIORITAS: Membaca dari Secrets Dashboard (untuk Deployment)
+            if "FIREBASE_SECRET" in st.secrets:
+                # Mengubah string JSON dari secrets menjadi dictionary Python
+                secret_dict = json.loads(st.secrets["FIREBASE_SECRET"])
+                cred = credentials.Certificate(secret_dict)
+                firebase_admin.initialize_app(cred)
+            # FALLBACK: Membaca dari file lokal (untuk Testing Lokal)
+            elif os.path.exists('serviceAccountKey.jso.json'):
                 cred = credentials.Certificate('serviceAccountKey.jso.json')
                 firebase_admin.initialize_app(cred)
             else:
-                st.error("File 'serviceAccountKey.jso.json' tidak ditemukan!")
+                st.error("Kredensial Firebase tidak ditemukan! Pastikan FIREBASE_SECRET sudah diisi di Dashboard Secrets.")
                 return None
         except Exception as e:
             st.error(f"Firebase Initialization Error: {e}")
@@ -80,7 +85,6 @@ def sync_google_drive_files(token):
         creds = Credentials.from_authorized_user_info(token)
         service = build('drive', 'v3', credentials=creds)
         
-        # Ambil 20 file terbaru
         results = service.files().list(
             pageSize=20, 
             fields="files(id, name, size, mimeType)"
@@ -92,13 +96,7 @@ def sync_google_drive_files(token):
             for item in items:
                 size_raw = item.get('size')
                 size_str = f"{int(size_raw) // 1024} KB" if size_raw else "Folder"
-                manager.add_file_metadata(
-                    name=item['name'], 
-                    size=size_str, 
-                    source="Google Drive", 
-                    file_type="file" if size_raw else "folder", 
-                    icon="🟢"
-                )
+                manager.add_file_metadata(item['name'], size_str, "Google Drive", "file" if size_raw else "folder", "🟢")
         return True
     except Exception as e:
         st.error(f"Sinkronisasi gagal: {e}")
@@ -121,13 +119,8 @@ class FirestoreManager:
     def add_file_metadata(self, name, size, source, file_type, icon):
         file_id = f"file_{int(datetime.now().timestamp())}_{name[:10].replace(' ', '_')}"
         db.collection(self.collection_path).document(file_id).set({
-            "id": file_id,
-            "name": name,
-            "size": size,
-            "source": source,
-            "type": file_type,
-            "icon": icon,
-            "created_at": datetime.now().isoformat()
+            "id": file_id, "name": name, "size": size, "source": source,
+            "type": file_type, "icon": icon, "created_at": datetime.now().isoformat()
         })
 
 # --- 6. RENDER UI ---
@@ -143,46 +136,33 @@ def load_ui():
             return html
     return "<h1>index.html tidak ditemukan</h1>"
 
-# --- 7. ALUR LOGIKA UTAMA ---
-# Cek parameter redirect dari Google
+# --- 7. MAIN LOGIC ---
 if "code" in st.query_params and not st.session_state.user:
     try:
         flow = get_google_auth_flow()
         flow.fetch_token(code=st.query_params["code"])
         creds = flow.credentials
-        st.session_state.user = {
-            "uid": creds.client_id[:15], 
-            "name": "User Terverifikasi"
-        }
+        st.session_state.user = {"uid": creds.client_id[:15], "name": "User Terverifikasi"}
         st.session_state.google_token = json.loads(creds.to_json())
         st.query_params.clear()
         st.rerun()
     except Exception as e:
-        st.error(f"Proses login gagal: {e}")
+        st.error(f"Login gagal: {e}")
 
-# Tampilkan UI
 components.html(load_ui(), height=850, scrolling=False)
 
-# Kontrol Sidebar
 with st.sidebar:
     st.title("☁️ OmniCloud")
     st.markdown("---")
     if not st.session_state.user:
         auth_url, _ = get_google_auth_flow().authorization_url(prompt='consent', access_type='offline')
-        st.markdown(f'''
-            <a href="{auth_url}" target="_self" 
-            style="text-decoration:none; color:white; background:#4285F4; 
-            padding:12px 20px; border-radius:8px; display:block; text-align:center; font-weight:bold;">
-            🔑 Login dengan Google
-            </a>
-        ''', unsafe_allow_html=True)
+        st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration:none; color:white; background:#4285F4; padding:12px 20px; border-radius:8px; display:block; text-align:center; font-weight:bold;">🔑 Login dengan Google</a>', unsafe_allow_html=True)
     else:
-        st.success(f"Masuk sebagai: {st.session_state.user['name']}")
+        st.success(f"Aktif: {st.session_state.user['name']}")
         if st.button("🔄 Sinkronkan Google Drive"):
-            with st.spinner("Menarik data..."):
-                if sync_google_drive_files(st.session_state.google_token):
-                    st.toast("Metadata berhasil diperbarui!")
-                    st.rerun()
+            if sync_google_drive_files(st.session_state.google_token):
+                st.toast("Data diperbarui!")
+                st.rerun()
         if st.button("🚪 Logout"):
             st.session_state.user = None
             st.session_state.google_token = None
